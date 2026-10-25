@@ -29,6 +29,7 @@ AIエンジニアリング実践講座（AIE2026）の演習と宿題で使う�
 uv run pytest -q
 uv run python -m app.ask "LoRAとは何ですか？"
 uv run python -m app.ask --interactive
+uv run python -m app.ask --list-models
 ```
 
 `--interactive` を付けると、同じ実行中の会話履歴を保ちながら続けて質問できます。10往復ごとに履歴を要約して置き換え、終了するには `exit` または `Ctrl-D` を入力します。
@@ -85,9 +86,13 @@ pyproject.toml / uv.lock  依存パッケージとその固定版
 ## モデルの切り替え
 
 既定モデルは `gemini-3.5-flash-lite` です。環境変数 `AIE_MODEL` で切り替えられます。
+コマンドごとに変える場合は `--model`（短縮形 `-m`）を指定します。対話モードでも指定できます。
 
 ```bash
 AIE_MODEL=gemini-3.5-flash uv run python -m app.ask "LoRAとは何ですか？"
+uv run python -m app.ask --model gemini-3.5-flash "LoRAとは何ですか？"
+uv run python -m app.ask --interactive --model gemini-3.5-flash
+uv run python -m app.ask --list-models
 ```
 
-無料枠には1分あたり・1日あたりのリクエスト上限があります。上限は [Gemini API のレート制限のページ](https://ai.google.dev/gemini-api/docs/rate-limits) で確認してください。
+`--list-models` は API キーで利用でき、回答生成に対応したモデル名を表示します。表示された名前を `--model` に指定してください。回答のたびに、モデル応答にかかった時間も表示します。無料枠には1分あたり・1日あたりのリクエスト上限があります。上限は [Gemini API のレート制限のページ](https://ai.google.dev/gemini-api/docs/rate-limits) で確認してください。
