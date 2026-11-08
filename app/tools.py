@@ -5,10 +5,13 @@
 """
 
 import json
+import random
+from datetime import datetime
 from functools import cache
 from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+LEARNING_LOG_DIR = Path(__file__).resolve().parent.parent / "learning_log"
 MAX_RESULTS = 3
 
 
@@ -77,3 +80,86 @@ def get_lecture_summary(lecture: int) -> str:
         available = sorted(p.stem for p in (DATA_DIR / "lectures").glob("*.md"))
         return f"第{lecture}回の要点はまだありません。用意されている回: {', '.join(available)}"
     return path.read_text(encoding="utf-8")
+
+
+def make_quiz(lecture: int) -> str:
+    """指定した回の用語から1つを選び、確認問題と答えを返す。
+
+    「第2回の確認問題を出して」のように復習用の問題を求められたときに使う。
+    """
+    glossary = load_glossary()
+    terms = [term for term in glossary if term["lecture"] == lecture]
+    if not terms:
+        available = sorted({term["lecture"] for term in glossary})
+        lectures = ", ".join(str(number) for number in available)
+        return f"第{lecture}回の用語は用語集にありません。用意されている回: {lectures}"
+
+    term = random.choice(terms)
+    return json.dumps(
+        {
+            "lecture": lecture,
+            "question": f"「{term['definition']}」を表す用語は何でしょう？",
+            "answer": term["term"],
+        },
+        ensure_ascii=False,
+    )
+
+
+def _learning_log_path(recorded_at: datetime) -> Path:
+    return LEARNING_LOG_DIR / f"{recorded_at:%Y-%m-%d}.jsonl"
+
+
+def format_learning_log(
+    learned: str,
+    question: str = "",
+    next_action: str = "",
+    lecture: int | None = None,
+) -> str:
+    """学習記録を承認画面と保存後の確認で使う形式に整える。"""
+    return "\n".join(
+        [
+            f"講義回: 第{lecture}回" if lecture is not None else "講義回: 未指定",
+            f"学んだこと:\n{learned.strip() or '（未記入）'}",
+            f"疑問:\n{question.strip() or '（なし）'}",
+            f"次にやること:\n{next_action.strip() or '（なし）'}",
+        ]
+    )
+
+
+def format_learning_log_preview(args: dict) -> str:
+    """承認前に保存先と、保存される学習記録の全文を表示する。"""
+    recorded_at = datetime.now().astimezone()
+    path = _learning_log_path(recorded_at)
+    content = format_learning_log(**args)
+    return f"保存先: {path.as_posix()}\n\n{content}"
+
+
+def save_learning_log(
+    learned: str,
+    question: str = "",
+    next_action: str = "",
+    lecture: int | None = None,
+) -> str:
+    """項目別の学習記録を learning_log/ に追記する。実行前に利用者の承認が必要。
+
+    学んだことは必ず記録し、疑問・次にやること・講義回は分かる範囲で指定する。
+    例: 「第3回で学んだことはツール承認、疑問は承認後の再開方法、
+    次にやることはCLIで試すこととして学習記録に保存して」
+    """
+    learned = learned.strip()
+    if not learned:
+        return "「学んだこと」が空のため、学習記録は保存しませんでした。"
+
+    recorded_at = datetime.now().astimezone()
+    path = _learning_log_path(recorded_at)
+    record = {
+        "recorded_at": recorded_at.isoformat(timespec="seconds"),
+        "lecture": lecture,
+        "learned": learned,
+        "question": question.strip(),
+        "next_action": next_action.strip(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return f"学習記録を保存しました。\n保存先: {path.as_posix()}\n\n{format_learning_log(learned, question, next_action, lecture)}"
