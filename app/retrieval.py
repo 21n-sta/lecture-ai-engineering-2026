@@ -138,6 +138,37 @@ def search(query: str) -> list[dict]:
         return [dict(row) for row in rows]
 
 
+def search_materials(query: str) -> list[dict]:
+    """ベクトル検索で見つかったページだけを返す。"""
+    return search(query)
+
+
+def search_materials_with_neighbors(query: str) -> list[dict]:
+    """検索結果と、同じ資料内にある前後1ページを重複なく返す。"""
+    hits = search(query)
+    pages_by_document: dict[str, dict[int, dict]] = defaultdict(dict)
+    for page in load_pages(RAG_SOURCE):
+        pages_by_document[page["document_id"]].setdefault(page["page"], page)
+
+    results = []
+    seen_pages = set()
+
+    def add_page(page: dict) -> None:
+        page_key = (page["document_id"], page["page"])
+        if page_key not in seen_pages:
+            seen_pages.add(page_key)
+            results.append(page)
+
+    for hit in hits:
+        add_page(hit)
+        document_pages = pages_by_document.get(hit["document_id"], {})
+        for page_number in (hit["page"] - 1, hit["page"] + 1):
+            neighbor = document_pages.get(page_number)
+            if neighbor is not None:
+                add_page(neighbor)
+    return results
+
+
 def search_graph(query: str) -> dict:
     """ベクトル検索を入口に、前後ページと共通用語で候補を広げる。"""
     pages = {page["page_id"]: page for page in load_pages(RAG_SOURCE)}

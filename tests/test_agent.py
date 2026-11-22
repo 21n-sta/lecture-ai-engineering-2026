@@ -6,12 +6,14 @@ TestModel は実際のLLMを呼ばない偽モデルで、登録されたツー�
 """
 
 import json
+import sys
 
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 
-from app.agent import agent
+import app.agent as agent_module
+from app.agent import agent, print_trace
 from app import tools
 
 BASE_TOOLS = {"search_glossary", "get_lecture_summary", "make_quiz", "save_learning_log"}
@@ -29,6 +31,7 @@ def test_base_tools_are_registered_and_called(monkeypatch):
 
     offered = {t.name for t in model.last_model_request_parameters.function_tools}
     assert BASE_TOOLS <= offered  # 演習でツールを足しても壊れないよう「含む」で判定
+    assert {"search_materials", "search_materials_with_neighbors"} <= offered
 
     called = {p.tool_name for p in _parts(result, ToolCallPart)}
     assert BASE_TOOLS <= called
@@ -38,6 +41,35 @@ def test_base_tools_are_registered_and_called(monkeypatch):
     assert result.output
 
 
+def test_print_trace_shows_elapsed_time_and_usage(capsys):
+    with agent.override(model=TestModel(call_tools=[])):
+        result = agent.run_sync("LoRAとは？")
+
+    print_trace(result, elapsed_seconds=1.25)
+
+    output = capsys.readouterr().out
+    usage = result.usage
+    assert "[time] 回答完了まで 1.25 秒" in output
+    assert (
+        f"[usage] 入力 {usage.input_tokens:,} tokens / 出力 {usage.output_tokens:,} tokens "
+        f"/ モデル応答 {usage.requests} 回"
+    ) in output
+
+
+def test_main_trace_passes_elapsed_time_and_usage(capsys, monkeypatch):
+    clock = iter([10.0, 11.25])
+    monkeypatch.setattr(agent_module, "build_model", lambda: TestModel(call_tools=[]))
+    monkeypatch.setattr(agent_module, "perf_counter", lambda: next(clock))
+    monkeypatch.setattr(sys, "argv", ["agent", "--trace", "LoRAとは？"])
+
+    agent_module.main()
+
+    output = capsys.readouterr().out
+    assert "[time] 回答完了まで 1.25 秒" in output
+    assert "[usage] 入力 " in output
+    assert " / モデル応答 " in output
+
+
 def test_material_result_reaches_the_model(monkeypatch):
     hit = {"page_id": "lec02-main-p052", "lecture": 2, "page": 52, "content": "元の重みは固定"}
     monkeypatch.setattr("app.retrieval.search", lambda *args, **kwargs: [hit])
@@ -45,7 +77,8 @@ def test_material_result_reaches_the_model(monkeypatch):
     with agent.override(model=model):
         result = agent.run_sync("RAGとは？")
     returns = _parts(result, ToolReturnPart)
-    assert returns and returns[0].tool_name == "search_glossary"
+    assert returns and returns[0].tool_name == "search_materials"
+    assert returns[0].content == [hit]
 
 
 def test_save_learning_log_waits_for_approval(tmp_path, monkeypatch):

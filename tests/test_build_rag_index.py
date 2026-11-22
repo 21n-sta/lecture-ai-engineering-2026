@@ -42,6 +42,45 @@ def test_built_index_can_be_searched(materials, monkeypatch):
     assert hits[0]["distance"] == pytest.approx(0)
 
 
+def test_search_with_neighbors_stays_in_document_and_deduplicates(tmp_path, monkeypatch):
+    source = tmp_path / "lectures.json"
+    source.write_text(json.dumps([
+        {"id": "lec01-main", "title": "講義1", "content": [
+            {"section": "章", "content": [
+                {"id": f"lec01-main-p{page:03}", "title": f"ページ{page}",
+                 "page": page, "content": f"本文{page}"}
+                for page in range(1, 5)
+            ]}]},
+        {"id": "lec02-main", "title": "講義2", "content": [
+            {"section": "章", "content": [
+                {"id": f"lec02-main-p{page:03}", "title": f"ページ{page}",
+                 "page": page, "content": f"別資料{page}"}
+                for page in range(1, 3)
+            ]}]},
+    ], ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(retrieval, "RAG_SOURCE", source)
+    monkeypatch.setattr(retrieval, "search", lambda _: [
+        {"page_id": "lec01-main-p002", "document_id": "lec01-main", "page": 2, "distance": 0.1},
+        {"page_id": "lec01-main-p003", "document_id": "lec01-main", "page": 3, "distance": 0.2},
+        {"page_id": "lec02-main-p001", "document_id": "lec02-main", "page": 1, "distance": 0.3},
+    ])
+
+    results = retrieval.search_materials_with_neighbors("質問")
+
+    assert [page["page_id"] for page in results] == [
+        "lec01-main-p002", "lec01-main-p001", "lec01-main-p003", "lec01-main-p004",
+        "lec02-main-p001", "lec02-main-p002",
+    ]
+    assert len({(page["document_id"], page["page"]) for page in results}) == len(results)
+
+
+def test_original_search_mode_returns_only_matches(monkeypatch):
+    hits = [{"page_id": "lec01-main-p002"}]
+    monkeypatch.setattr(retrieval, "search", lambda _: hits)
+
+    assert retrieval.search_materials("質問") == hits
+
+
 def test_existing_index_survives_failed_rebuild(materials):
     source, database = materials
     build_index(source, database, embedder=lambda *_: [1, 0])
