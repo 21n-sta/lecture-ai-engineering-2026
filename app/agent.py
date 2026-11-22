@@ -29,6 +29,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.providers.google import GoogleProvider
 
 from app import tools
+from app import retrieval
 from app.retrieval import run_full_context
 from app.config import MODEL, api_error_message, get_api_key
 
@@ -40,6 +41,7 @@ INSTRUCTIONS = """\
 - 学習記録を求められたら、学んだこと・疑問・次にやること・講義回を分かる範囲で整理して save_learning_log を呼ぶ。
 - 学習記録に書かれていない内容を推測で補わず、分からない任意項目は空欄のままにする。
 - 用語集に見つからないことは、推測で断定せず「用語集にはない」と伝える。
+- 講義資料の検索では、該当ページだけでよい場合は search_materials を使い、前後の文脈も必要な場合は search_materials_with_neighbors を使う。ユーザーが検索範囲を指定した場合はそれに従う。
 - 回答の最後に、関係する回（第N回）を示す。
 - 宿題の答えそのものは書かず、考え方のヒントで導く。
 """
@@ -82,6 +84,8 @@ agent.tool_plain(tools.search_glossary)
 agent.tool_plain(tools.get_lecture_summary)
 agent.tool_plain(tools.make_quiz)
 agent.tool_plain(tools.save_learning_log, requires_approval=True)
+agent.tool_plain(retrieval.search_materials)
+agent.tool_plain(retrieval.search_materials_with_neighbors)
 
 # 第5回: 使う MCP サーバーの設定ファイル。Claude Desktop や Cursor と同じ "mcpServers" 形式
 MCP_CONFIG = Path(__file__).resolve().parent / "mcp_servers.json"
@@ -188,9 +192,9 @@ def main() -> None:
     target = build_mcp_agent() if args.mcp else agent
     mode = nullcontext()
     if args.tree:
-        mode = target.override(instructions=TREE_INSTRUCTIONS, tools=[tools.browse_tree])
+        mode = target.override(instructions=TREE_INSTRUCTIONS, tools=[retrieval.browse_tree])
     elif args.graph:
-        mode = target.override(instructions=GRAPH_INSTRUCTIONS, tools=[tools.search_graph])
+        mode = target.override(instructions=GRAPH_INSTRUCTIONS, tools=[retrieval.search_graph])
     with mode:
         if args.list_tools:
             if args.full_context:
@@ -206,6 +210,7 @@ def main() -> None:
     if args.mcp:
         print("[tools] MCP サーバー（app/mcp_servers.json）")
     try:
+        started_at = perf_counter()
         model = build_model()
         result = target.run_sync(args.question, model=model)
         while isinstance(result.output, DeferredToolRequests):
@@ -233,12 +238,13 @@ def main() -> None:
                 deferred_tool_results=requests.build_results(approvals=approvals),
                 model=model,
             )
+        elapsed_seconds = perf_counter() - started_at
     except ModelHTTPError as e:
         print(api_error_message(e.status_code, str(e.body)[:200]))
         raise SystemExit(1)
     print(result.output)
     if args.trace:
-        print_trace(result)
+        print_trace(result, elapsed_seconds)
 
 
 if __name__ == "__main__":
